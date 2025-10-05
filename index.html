@@ -11,14 +11,7 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-  <!-- Recharts (UMD) -->
-  <script crossorigin src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
-
-  <!-- Babel para transformar JSX en el navegador (no requiere build local) -->
-  <!-- NOTA: babel-standalone@6 soporta presets 'es2015' y 'react'; 'env' NO está incluido -->
-  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-
-  <!-- Diagnóstico de errores temprano -->
+  <!-- Diagnóstico de errores temprano (banner visible) -->
   <script>
     (function(){
       function banner(msg){
@@ -36,6 +29,7 @@
         }
         diag.textContent = msg;
       }
+      window.__banner = banner;
       window.addEventListener('error', function(e){
         banner('Runtime error: ' + (e && e.message ? e.message : 'Script error.'));
       });
@@ -48,323 +42,397 @@
   </noscript>
   <div id="root" data-ready="false"></div>
 
-  <script type="text/babel" data-presets="es2015,react">
-    const { useMemo, useState } = React;
-    const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } = (window.Recharts || {});
-
-    // Guardas simples para fallos de carga de Recharts
-    if (!ResponsiveContainer || !BarChart || !Bar || !XAxis || !YAxis || !Tooltip) {
-      throw new Error('Recharts no se cargó correctamente. Revisa la red/CDN.');
-    }
-
-    // --- Dataset de tecnologías y velocidades típicas reales (aprox.) ---
-    // Valores típicos basados en rangos históricamente observados en el mundo. No son máximos teóricos.
-    // "mbps" representa megabits por segundo. La eficiencia permite ajustar a condiciones reales adicionales.
-    const TECHNOLOGIES = [
-      // Acceso conmutado / primitivo
-      { id: "dialup56k", name: "Dial‑up 56k", type: "cobre", era: "1990s", mbps: 0.04, notes: "Línea telefónica conmutada. Muy sensible a ruido." },
-      { id: "isdn64", name: "ISDN 64k", type: "cobre", era: "1990s", mbps: 0.064, notes: "Canal único BRI." },
-      { id: "isdn128", name: "ISDN 128k", type: "cobre", era: "1990s", mbps: 0.128, notes: "Canales enlazados." },
-
-      // DSL
-      { id: "adsl", name: "ADSL (hasta 8 Mbps)", type: "dsl", era: "2000s", mbps: 4, notes: "Distancia al DSLAM crítica; cobre." },
-      { id: "adsl2p", name: "ADSL2+ (hasta 24 Mbps)", type: "dsl", era: "2000s", mbps: 10, notes: "Rendimiento cae con distancia." },
-      { id: "vdsl2", name: "VDSL2", type: "dsl", era: "2010s", mbps: 50, notes: "Par trenzado corto; a veces vectoring." },
-
-      // Cable coaxial
-      { id: "docsis10", name: "Cable DOCSIS 1.x (primeros)", type: "cable", era: "2000s", mbps: 5, notes: "Planes tempranos 1–5 Mbps." },
-      { id: "docsis20", name: "Cable DOCSIS 2.0", type: "cable", era: "2000s", mbps: 20, notes: "Canal único ~38 Mbps teórico; planes 6–30." },
-      { id: "docsis30", name: "Cable DOCSIS 3.0", type: "cable", era: "2010s", mbps: 100, notes: "Canales enlazados; 50–200 típ." },
-      { id: "docsis31", name: "Cable DOCSIS 3.1", type: "cable", era: "late 2010s", mbps: 500, notes: "OFDM; 0.3–1 Gbps típ. según plan." },
-
-      // Fibra
-      { id: "gpon", name: "Fibra GPON", type: "fibra", era: "2010s", mbps: 300, notes: "Portadora 2.5 Gbps down; planes 100–1000." },
-      { id: "xgpon", name: "Fibra XG‑PON / 10G‑PON", type: "fibra", era: "2020s", mbps: 2000, notes: "Backhaul 10 Gbps; planes 1–5 Gbps." },
-
-      // Inalámbrico fijo / móvil
-      { id: "wimax", name: "Fixed Wireless (WiMAX/LTE‑Fijo)", type: "inalambrico", era: "2010s", mbps: 10, notes: "Muy dependiente de LOS y sector." },
-      { id: "3g", name: "3G HSPA", type: "movil", era: "late 2000s", mbps: 2, notes: "Celdas cargadas penalizan fuerte." },
-      { id: "4g", name: "4G LTE", type: "movil", era: "2010s", mbps: 30, notes: "10–100 Mbps típ., según banda y carga." },
-      { id: "5gsub6", name: "5G Sub‑6", type: "movil", era: "2020s", mbps: 150, notes: "100–600 típ.; NSA/SA varía." },
-      { id: "5gmmw", name: "5G mmWave (ideal)", type: "movil", era: "2020s", mbps: 1000, notes: "Altísima variabilidad; LOS requerido." },
-
-      // Satelital
-      { id: "geo", name: "Satélite GEO (Ku/Ka)", type: "satelite", era: "2010s", mbps: 25, notes: "12–50 Mbps típ., latencia >500 ms." },
-      { id: "leo", name: "Satélite LEO (Starlink)", type: "satelite", era: "2020s", mbps: 150, notes: "50–250 típ.; latencia más baja." },
-    ];
-
-    // Utilidades
-    function toBits({ value, unit }) {
-      const v = Number(value || 0);
-      switch (unit) {
-        case "MB":
-          return v * 1e6 * 8; // decimal
-        case "GB":
-          return v * 1e9 * 8;
-        case "TB":
-          return v * 1e12 * 8;
-        default:
-          return v * 8; // bytes -> bits
-      }
-    }
-
-    function formatDuration(seconds) {
-      if (!isFinite(seconds) || seconds <= 0) return "0 s";
-      const d = Math.floor(seconds / 86400);
-      const h = Math.floor((seconds % 86400) / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const parts = [];
-      if (d) parts.push(`${d} d`);
-      if (h) parts.push(`${h} h`);
-      if (m) parts.push(`${m} min`);
-      if (s || parts.length === 0) parts.push(`${s} s`);
-      return parts.join(" ");
-    }
-
-    function classNames() {
-      return Array.prototype.slice.call(arguments).filter(Boolean).join(" ");
-    }
-
-    // Componentes mínimos para reemplazar Card de shadcn/ui
-    function Card(props){ return <div className={classNames("rounded-2xl border border-slate-200 bg-white shadow-sm", props.className)}>{props.children}</div>; }
-    function CardHeader(props){ return <div className="px-5 pt-5">{props.children}</div>; }
-    function CardTitle(props){ return <h2 className="text-lg font-semibold">{props.children}</h2>; }
-    function CardContent(props){ return <div className={classNames("px-5 pb-5", props.className)}>{props.children}</div>; }
-
-    function App() {
-      const [size, setSize] = useState(1);
-      const [unit, setUnit] = useState("GB");
-      const [eff, setEff] = useState(85); // % de eficiencia capa aplicación
-      const [filter, setFilter] = useState("all");
-      const [sortKey, setSortKey] = useState("time"); // time | speed | era
-      const [showNotes, setShowNotes] = useState(true);
-
-      const bits = useMemo(() => toBits({ value: size, unit }), [size, unit]);
-      const rows = useMemo(() => {
-        const efficiency = Math.max(1, Math.min(100, eff)) / 100; // 0.01–1
-        const data = TECHNOLOGIES
-          .filter(t => (filter === "all" ? true : t.type === filter))
-          .map(t => {
-            const throughput_bps = t.mbps * 1e6 * efficiency;
-            const seconds = bits / throughput_bps;
-            return {
-              ...t,
-              seconds,
-              duration: formatDuration(seconds),
-            };
-          });
-
-        const sorter = {
-          time: (a, b) => a.seconds - b.seconds,
-          speed: (a, b) => b.mbps - a.mbps,
-          era: (a, b) => a.era.localeCompare(b.era),
-        }[sortKey];
-
-        return data.sort(sorter);
-      }, [bits, eff, filter, sortKey]);
-
-      const chartData = rows.map(r => ({ name: r.name, minutes: r.seconds / 60 }));
-
-      const tabOptions = [
-        { value: "all", label: "Todos" },
-        { value: "cobre", label: "Cobre" },
-        { value: "dsl", label: "DSL" },
-        { value: "cable", label: "Cable" },
-        { value: "fibra", label: "Fibra" },
-        { value: "inalambrico", label: "Inalám." },
-      ];
-
-      return (
-        <div className="min-h-screen w-full">
-          <div className="max-w-6xl mx-auto px-4 py-8">
-            <header className="mb-6">
-              <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">Calculadora de tiempo de descarga por tecnología de acceso</h1>
-              <p className="text-slate-600 mt-2 max-w-3xl">
-                Ingresá un tamaño de archivo y compará cuánto tardaría en bajar con tecnologías reales usadas para llevar Internet al hogar a lo largo de las décadas. Las cifras son típicas aproximadas del mundo real; ajustá la eficiencia para reflejar sobrecarga de protocolo, congestión y otras pérdidas.
-              </p>
-            </header>
-
-            <div className="grid md:grid-cols-3 gap-4">
-              <Card className="md:col-span-1">
-                <CardHeader>
-                  <CardTitle>Entrada</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <label htmlFor="size" className="text-sm font-medium text-slate-700">Tamaño</label>
-                    <div className="flex gap-2 mt-2">
-                      <input id="size" type="number" min={0} step="any" value={size} onChange={(e) => setSize(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400" />
-                      <select value={unit} onChange={(e) => setUnit(e.target.value)} className="w-[120px] rounded-md border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400">
-                        <option value="MB">MB</option>
-                        <option value="GB">GB</option>
-                        <option value="TB">TB</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Eficiencia real (%)</label>
-                    <div className="mt-2">
-                      <input type="range" min={40} max={100} step={1} value={eff} onChange={(e) => setEff(Number(e.target.value))} className="w-full" />
-                    </div>
-                    <div className="text-sm text-slate-600 mt-1">Usa 85% como referencia para pérdidas típicas.</div>
-                    <div className="mt-1 text-sm font-medium">{eff}%</div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Filtrar por tipo</label>
-                    <div className="mt-2 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 p-1">
-                      {tabOptions.map(t => (
-                        <button
-                          key={t.value}
-                          onClick={() => setFilter(t.value)}
-                          className={classNames(
-                            'text-sm rounded-md px-2 py-1 transition',
-                            filter === t.value ? 'bg-slate-900 text-white' : 'bg-white hover:bg-slate-100'
-                          )}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Orden</label>
-                    <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400">
-                      <option value="time">Por tiempo (más rápido primero)</option>
-                      <option value="speed">Por velocidad (Mbps)</option>
-                      <option value="era">Por era</option>
-                    </select>
-                  </div>
-
-                  <div className="pt-2">
-                    <label htmlFor="notes" className="text-sm font-medium text-slate-700">Notas</label>
-                    <div className="mt-2 inline-flex items-center gap-2">
-                      <label className="inline-flex items-center cursor-pointer">
-                        <input id="notes" type="checkbox" className="sr-only peer" checked={showNotes} onChange={(e) => setShowNotes(e.target.checked)} />
-                        <div className="relative w-10 h-6 bg-slate-200 rounded-full peer-checked:bg-slate-900 transition">
-                          <span className="absolute top-0.5 left-0.5 h-5 w-5 bg-white rounded-full transition-transform peer-checked:translate-x-4"></span>
-                        </div>
-                      </label>
-                      <span className="text-sm">Mostrar notas breves</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="md:col-span-2">
-                <CardHeader>
-                  <CardTitle>Comparativa</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={chartData} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
-                        <XAxis dataKey="name" hide />
-                        <YAxis tickFormatter={(v) => (v >= 1440 ? `${(v/1440).toFixed(1)} d` : v >= 60 ? `${(v/60).toFixed(1)} h` : `${v.toFixed(0)} m`)} />
-                        <Tooltip formatter={(v) => `${Number(v).toFixed(1)} min`} labelFormatter={(l) => l} />
-                        <Bar dataKey="minutes" radius={[8,8,0,0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="mt-6 overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-slate-600">
-                          <th className="py-2 pr-2">Tecnología</th>
-                          <th className="py-2 pr-2">Era</th>
-                          <th className="py-2 pr-2">Vel. típica</th>
-                          <th className="py-2 pr-2">Tiempo estimado</th>
-                          {showNotes && <th className="py-2 pr-2">Notas</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map(r => (
-                          <tr key={r.id} className="border-t border-slate-2 00">
-                            <td className="py-2 pr-2 font-medium">{r.name}</td>
-                            <td className="py-2 pr-2 whitespace-nowrap">{r.era}</td>
-                            <td className="py-2 pr-2">{r.mbps.toLocaleString()} Mbps</td>
-                            <td className="py-2 pr-2 whitespace-nowrap">{r.duration}</td>
-                            {showNotes && <td className="py-2 pr-2 text-slate-600">{r.notes}</td>}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="mt-4 flex items-start gap-2 text-slate-600 text-sm">
-                    {/* Icono Info (Lucide/Feather compatible) */}
-                    <svg className="w-4 h-4 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <circle cx="12" cy="12" r="10"></circle>
-                      <line x1="12" y1="16" x2="12" y2="12"></line>
-                      <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
-                    <p>
-                      Supuestos: unidades decimales (1 GB = 10^9 bytes). La eficiencia reduce la velocidad nominal para contemplar sobrecarga de protocolos, contención de medio compartido y variaciones reales. Los valores de velocidad son típicos observados por usuarios en cada época/tecnología, no máximos de estándar.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // Montaje robusto (React 18+ y fallback React 17)
-    (function(){
-      var container = document.getElementById('root');
-      try {
-        if (ReactDOM && ReactDOM.createRoot) {
-          var root = ReactDOM.createRoot(container);
-          root.render(<App />);
-        } else if (ReactDOM && ReactDOM.render) {
-          ReactDOM.render(<App />, container);
-        } else {
-          throw new Error('ReactDOM no está disponible.');
-        }
-        container.setAttribute('data-ready','true');
-      } catch (e) {
-        // re-lanza para que el banner lo capture
-        throw e;
-      }
-    })();
-  </script>
-
-  <!-- Self-tests (no modifican la UI) -->
+  <!-- App sin JSX ni TypeScript: NO necesita Babel ni bundlers -->
   <script>
     (function(){
-      function assertEqual(name, a, b){ return {name, pass: a===b, a, b}; }
-      function show(results){
-        var anyFail = results.some(r=>!r.pass);
-        var block = document.createElement('details');
-        block.className = 'fixed right-3 bottom-3 max-w-[90vw] bg-white/90 backdrop-blur border border-slate-200 shadow rounded-md p-3 text-xs text-slate-700';
-        var sum = document.createElement('summary');
-        sum.textContent = 'Self-tests: ' + (anyFail ? 'FAIL' : 'OK') + ' ('+results.filter(r=>!r.pass).length+' fails)';
-        block.appendChild(sum);
-        var pre = document.createElement('pre');
-        pre.textContent = JSON.stringify(results, null, 2);
-        block.appendChild(pre);
-        document.body.appendChild(block);
+      'use strict';
+
+      // --- Utilidad: cargar scripts con fallback de CDN y versión fija ---
+      function loadScript(src){
+        return new Promise(function(resolve, reject){
+          var s = document.createElement('script');
+          s.src = src; s.async = true; s.defer = true; s.crossOrigin = 'anonymous';
+          s.onload = function(){ resolve(src); };
+          s.onerror = function(){ reject(new Error('No se pudo cargar: ' + src)); };
+          document.head.appendChild(s);
+        });
       }
-      try{
-        // Re-implement util funcs in this IIFE scope for testing
-        function toBitsLocal(o){ var v=Number(o.value||0); if(o.unit==='MB') return v*1e6*8; if(o.unit==='GB') return v*1e9*8; if(o.unit==='TB') return v*1e12*8; return v*8; }
-        function fmtDur(sec){ if(!isFinite(sec)||sec<=0) return '0 s'; var d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60),s=Math.floor(sec%60); var parts=[]; if(d)parts.push(d+' d'); if(h)parts.push(h+' h'); if(m)parts.push(m+' min'); if(s||parts.length===0)parts.push(s+' s'); return parts.join(' '); }
+      function loadRecharts(){
+        var tried = [];
+        var sources = [
+          // Versiones UMD conocidas
+          'https://cdn.jsdelivr.net/npm/recharts@2.6.2/umd/Recharts.min.js',
+          'https://unpkg.com/recharts@2.6.2/umd/Recharts.min.js',
+          // Último fallback sin versión
+          'https://unpkg.com/recharts/umd/Recharts.min.js'
+        ];
+        function tryNext(){
+          if(!sources.length){
+            var msg = 'Recharts no se cargó desde ninguno de los CDNs intentados: ' + tried.join(', ');
+            (window.__banner||console.warn)(msg);
+            window.__RECHARTS_FAILED__ = true;
+            return Promise.resolve(false);
+          }
+          var src = sources.shift(); tried.push(src);
+          return loadScript(src).then(function(){
+            if (window.Recharts) return true; // cargado
+            return tryNext();
+          }).catch(function(){
+            return tryNext();
+          });
+        }
+        return tryNext();
+      }
 
-        var tests = [];
-        tests.push(assertEqual('toBits 1 GB', toBitsLocal({value:1,unit:'GB'}), 8e9));
-        tests.push(assertEqual('toBits 2 MB', toBitsLocal({value:2,unit:'MB'}), 16e6));
-        tests.push(assertEqual('toBits 3 TB', toBitsLocal({value:3,unit:'TB'}), 24e12));
-        tests.push(assertEqual('fmt 90s', fmtDur(90), '1 min 30 s'));
-        tests.push(assertEqual('fmt 0s', fmtDur(0), '0 s'));
-        tests.push({name:'rows sanity', pass:true}); // placeholder sanity; UI calcula filas en runtime
+      // Aliases React
+      var React = window.React;
+      var ReactDOM = window.ReactDOM;
+      if (!React || !ReactDOM) {
+        throw new Error('React/ReactDOM no se cargaron. Verifica la red/CDN.');
+      }
+      var useMemo = React.useMemo;
+      var useState = React.useState;
+      var useEffect = React.useEffect;
+      var h = React.createElement;
 
-        show(tests);
-      } catch(e){ console.warn('Self-tests error:', e); }
+      // --- Dataset (valores típicos aproximados) ---
+      var TECHNOLOGIES = [
+        { id: "dialup56k", name: "Dial‑up 56k", type: "cobre", era: "1990s", mbps: 0.04, notes: "Línea telefónica conmutada. Muy sensible a ruido." },
+        { id: "isdn64", name: "ISDN 64k", type: "cobre", era: "1990s", mbps: 0.064, notes: "Canal único BRI." },
+        { id: "isdn128", name: "ISDN 128k", type: "cobre", era: "1990s", mbps: 0.128, notes: "Canales enlazados." },
+        { id: "adsl", name: "ADSL (hasta 8 Mbps)", type: "dsl", era: "2000s", mbps: 4, notes: "Distancia al DSLAM crítica; cobre." },
+        { id: "adsl2p", name: "ADSL2+ (hasta 24 Mbps)", type: "dsl", era: "2000s", mbps: 10, notes: "Rendimiento cae con distancia." },
+        { id: "vdsl2", name: "VDSL2", type: "dsl", era: "2010s", mbps: 50, notes: "Par trenzado corto; a veces vectoring." },
+        { id: "docsis10", name: "Cable DOCSIS 1.x (primeros)", type: "cable", era: "2000s", mbps: 5, notes: "Planes tempranos 1–5 Mbps." },
+        { id: "docsis20", name: "Cable DOCSIS 2.0", type: "cable", era: "2000s", mbps: 20, notes: "Canal único ~38 Mbps teórico; planes 6–30." },
+        { id: "docsis30", name: "Cable DOCSIS 3.0", type: "cable", era: "2010s", mbps: 100, notes: "Canales enlazados; 50–200 típ." },
+        { id: "docsis31", name: "Cable DOCSIS 3.1", type: "cable", era: "late 2010s", mbps: 500, notes: "OFDM; 0.3–1 Gbps típ. según plan." },
+        { id: "gpon", name: "Fibra GPON", type: "fibra", era: "2010s", mbps: 300, notes: "Portadora 2.5 Gbps down; planes 100–1000." },
+        { id: "xgpon", name: "Fibra XG‑PON / 10G‑PON", type: "fibra", era: "2020s", mbps: 2000, notes: "Backhaul 10 Gbps; planes 1–5 Gbps." },
+        { id: "wimax", name: "Fixed Wireless (WiMAX/LTE‑Fijo)", type: "inalambrico", era: "2010s", mbps: 10, notes: "Muy dependiente de LOS y sector." },
+        { id: "3g", name: "3G HSPA", type: "movil", era: "late 2000s", mbps: 2, notes: "Celdas cargadas penalizan fuerte." },
+        { id: "4g", name: "4G LTE", type: "movil", era: "2010s", mbps: 30, notes: "10–100 Mbps típ., según banda y carga." },
+        { id: "5gsub6", name: "5G Sub‑6", type: "movil", era: "2020s", mbps: 150, notes: "100–600 típ.; NSA/SA varía." },
+        { id: "5gmmw", name: "5G mmWave (ideal)", type: "movil", era: "2020s", mbps: 1000, notes: "Altísima variabilidad; LOS requerido." },
+        { id: "geo", name: "Satélite GEO (Ku/Ka)", type: "satelite", era: "2010s", mbps: 25, notes: "12–50 Mbps típ., latencia >500 ms." },
+        { id: "leo", name: "Satélite LEO (Starlink)", type: "satelite", era: "2020s", mbps: 150, notes: "50–250 típ.; latencia más baja." }
+      ];
+
+      // Utilidades
+      function toBits(o){
+        var v = Number(o && o.value || 0);
+        switch(o && o.unit){
+          case 'MB': return v * 1e6 * 8;
+          case 'GB': return v * 1e9 * 8;
+          case 'TB': return v * 1e12 * 8;
+          default:   return v * 8; // bytes -> bits
+        }
+      }
+      function formatDuration(seconds){
+        if (!isFinite(seconds) || seconds <= 0) return '0 s';
+        var d = Math.floor(seconds / 86400);
+        var h = Math.floor((seconds % 86400) / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = Math.floor(seconds % 60);
+        var parts = [];
+        if (d) parts.push(d + ' d');
+        if (h) parts.push(h + ' h');
+        if (m) parts.push(m + ' min');
+        if (s || parts.length === 0) parts.push(s + ' s');
+        return parts.join(' ');
+      }
+      function classNames(){
+        return Array.prototype.slice.call(arguments).filter(Boolean).join(' ');
+      }
+
+      // Mini gráfico de barras de respaldo (SVG) si Recharts falla
+      function MiniBarChart(props){
+        var data = props.data || [];
+        var w = props.width || 800, hgt = props.height || 288; // ~h-72
+        var pad = {l:32, r:12, t:8, b:24};
+        var innerW = w - pad.l - pad.r;
+        var innerH = hgt - pad.t - pad.b;
+        var max = 0;
+        for (var i=0;i<data.length;i++){ if (data[i].minutes>max) max = data[i].minutes; }
+        max = max || 1;
+        var barW = innerW / (data.length||1);
+        var children = [
+          h('rect', { key:'bg', x:0, y:0, width:w, height:hgt, fill:'transparent'}),
+          // Y ticks simples: 0, 50%, 100%
+          h('text',{key:'yt0', x:2, y:pad.t + innerH, className:'fill-slate-500 text-[10px]'}, '0 m'),
+          h('text',{key:'yt1', x:2, y:pad.t + innerH*0.5, className:'fill-slate-500 text-[10px]'}, (max/2>=1440? (max/2880).toFixed(1)+' d' : max/2>=60? (max/120).toFixed(1)+' h' : (max/2).toFixed(0)+' m')),
+          h('text',{key:'yt2', x:2, y:pad.t + 8, className:'fill-slate-500 text-[10px]'}, (max>=1440? (max/1440).toFixed(1)+' d' : max>=60? (max/60).toFixed(1)+' h' : max.toFixed(0)+' m'))
+        ];
+        for (var j=0;j<data.length;j++){
+          var d = data[j];
+          var x = pad.l + j*barW + 2;
+          var barH = (d.minutes/max)*innerH;
+          var y = pad.t + innerH - barH;
+          children.push(h('rect', {
+            key:'b'+j, x:x, y:y, width:Math.max(2, barW-4), height:Math.max(1, barH), rx:4, ry:4,
+            className:'fill-slate-400 hover:fill-slate-500',
+            title: d.name + ' — ' + d.minutes.toFixed(1) + ' min'
+          }));
+        }
+        return h('svg', {width:'100%', height:'100%', viewBox:'0 0 '+w+' '+hgt, className:'block'}, children);
+      }
+
+      // Componentes mínimos estilo Card
+      function Card(props){ return h('div', { className: classNames('rounded-2xl border border-slate-200 bg-white shadow-sm', props.className) }, props.children); }
+      function CardHeader(props){ return h('div', { className: 'px-5 pt-5' }, props.children); }
+      function CardTitle(props){ return h('h2', { className: 'text-lg font-semibold' }, props.children); }
+      function CardContent(props){ return h('div', { className: classNames('px-5 pb-5', props.className) }, props.children); }
+
+      function ChartArea(props){
+        var data = props.data;
+        var ready = !!window.Recharts && !window.__RECHARTS_FAILED__;
+        if (ready){
+          var R = window.Recharts;
+          return h('div', { className: 'h-72' },
+            h(R.ResponsiveContainer, { width:'100%', height:'100%' },
+              h(R.BarChart, { data:data, margin:{left:12,right:12,top:8,bottom:8} },
+                h(R.XAxis, { dataKey:'name', hide:true }),
+                h(R.YAxis, { tickFormatter: function(v){ return (v >= 1440 ? (v/1440).toFixed(1)+' d' : v >= 60 ? (v/60).toFixed(1)+' h' : v.toFixed(0)+' m'); } }),
+                h(R.Tooltip, { formatter: function(v){ return Number(v).toFixed(1)+' min'; }, labelFormatter:function(l){return l;} }),
+                h(R.Bar, { dataKey:'minutes', radius:[8,8,0,0] })
+              )
+            )
+          );
+        }
+        // Fallback SVG
+        return h('div', { className: 'h-72 border border-slate-100 rounded-lg' },
+          h(MiniBarChart, { data:data })
+        );
+      }
+
+      function App(){
+        var _useState = useState(1), size = _useState[0], setSize = _useState[1];
+        var _useState2 = useState('GB'), unit = _useState2[0], setUnit = _useState2[1];
+        var _useState3 = useState(85), eff = _useState3[0], setEff = _useState3[1];
+        var _useState4 = useState('all'), filter = _useState4[0], setFilter = _useState4[1];
+        var _useState5 = useState('time'), sortKey = _useState5[0], setSortKey = _useState5[1];
+        var _useState6 = useState(true), showNotes = _useState6[0], setShowNotes = _useState6[1];
+        var _useState7 = useState(!!window.Recharts), rechartsReady = _useState7[0], setRechartsReady = _useState7[1];
+
+        useEffect(function(){
+          if (!window.Recharts && !window.__RECHARTS_FAILED__){
+            loadRecharts().then(function(ok){ setRechartsReady(!!window.Recharts && !window.__RECHARTS_FAILED__); });
+          }
+        }, []);
+
+        var bits = useMemo(function(){ return toBits({ value: size, unit: unit }); }, [size, unit]);
+        var rows = useMemo(function(){
+          var efficiency = Math.max(1, Math.min(100, eff)) / 100;
+          var data = TECHNOLOGIES.filter(function(t){ return filter === 'all' ? true : t.type === filter; }).map(function(t){
+            var throughput_bps = t.mbps * 1e6 * efficiency;
+            var seconds = bits / throughput_bps;
+            return Object.assign({}, t, { seconds: seconds, duration: formatDuration(seconds) });
+          });
+          var sorter = {
+            time: function(a,b){ return a.seconds - b.seconds; },
+            speed: function(a,b){ return b.mbps - a.mbps; },
+            era: function(a,b){ return String(a.era).localeCompare(String(b.era)); }
+          }[sortKey];
+          return data.sort(sorter);
+        }, [bits, eff, filter, sortKey]);
+
+        var chartData = rows.map(function(r){ return { name: r.name, minutes: r.seconds / 60 }; });
+
+        var tabOptions = [
+          { value: 'all', label: 'Todos' },
+          { value: 'cobre', label: 'Cobre' },
+          { value: 'dsl', label: 'DSL' },
+          { value: 'cable', label: 'Cable' },
+          { value: 'fibra', label: 'Fibra' },
+          { value: 'inalambrico', label: 'Inalám.' }
+        ];
+
+        return h('div', { className: 'min-h-screen w-full' },
+          h('div', { className: 'max-w-6xl mx-auto px-4 py-8' },
+            // Header
+            h('header', { className: 'mb-6' },
+              h('h1', { className: 'text-3xl md:text-4xl font-semibold tracking-tight' }, 'Calculadora de tiempo de descarga por tecnología de acceso'),
+              h('p', { className: 'text-slate-600 mt-2 max-w-3xl' }, 'Ingresá un tamaño de archivo y compará cuánto tardaría en bajar con tecnologías reales usadas para llevar Internet al hogar a lo largo de las décadas. Las cifras son típicas aproximadas del mundo real; ajustá la eficiencia para reflejar sobrecarga de protocolo, congestión y otras pérdidas.')
+            ),
+
+            h('div', { className: 'grid md:grid-cols-3 gap-4' },
+              // Card izquierda
+              h(Card, { className: 'md:col-span-1' },
+                h(CardHeader, null, h(CardTitle, null, 'Entrada')),
+                h(CardContent, { className: 'space-y-4' },
+                  // Tamaño/Unidad
+                  h('div', null,
+                    h('label', { htmlFor: 'size', className: 'text-sm font-medium text-slate-700' }, 'Tamaño'),
+                    h('div', { className: 'flex gap-2 mt-2' },
+                      h('input', { id: 'size', type: 'number', min: 0, step: 'any', value: size, onChange: function(e){ setSize(e.target.value); }, className: 'w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400' }),
+                      h('select', { value: unit, onChange: function(e){ setUnit(e.target.value); }, className: 'w-[120px] rounded-md border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400' },
+                        h('option', { value: 'MB' }, 'MB'),
+                        h('option', { value: 'GB' }, 'GB'),
+                        h('option', { value: 'TB' }, 'TB')
+                      )
+                    )
+                  ),
+                  // Eficiencia
+                  h('div', null,
+                    h('label', { className: 'text-sm font-medium text-slate-700' }, 'Eficiencia real (%)'),
+                    h('div', { className: 'mt-2' },
+                      h('input', { type: 'range', min: 40, max: 100, step: 1, value: eff, onChange: function(e){ setEff(Number(e.target.value)); }, className: 'w-full' })
+                    ),
+                    h('div', { className: 'text-sm text-slate-600 mt-1' }, 'Usa 85% como referencia para pérdidas típicas.'),
+                    h('div', { className: 'mt-1 text-sm font-medium' }, String(eff) + '%')
+                  ),
+                  // Filtro tabs
+                  h('div', null,
+                    h('label', { className: 'text-sm font-medium text-slate-700' }, 'Filtrar por tipo'),
+                    h('div', { className: 'mt-2 grid grid-cols-6 gap-1 rounded-lg border border-slate-200 p-1' },
+                      tabOptions.map(function(t){
+                        return h('button', {
+                          key: t.value,
+                          onClick: function(){ setFilter(t.value); },
+                          className: classNames('text-sm rounded-md px-2 py-1 transition', filter === t.value ? 'bg-slate-900 text-white' : 'bg-white hover:bg-slate-100')
+                        }, t.label);
+                      })
+                    )
+                  ),
+                  // Orden
+                  h('div', null,
+                    h('label', { className: 'text-sm font-medium text-slate-700' }, 'Orden'),
+                    h('select', { value: sortKey, onChange: function(e){ setSortKey(e.target.value); }, className: 'mt-2 w-full rounded-md border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400' },
+                      h('option', { value: 'time' }, 'Por tiempo (más rápido primero)'),
+                      h('option', { value: 'speed' }, 'Por velocidad (Mbps)'),
+                      h('option', { value: 'era' }, 'Por era')
+                    )
+                  ),
+                  // Notas toggle
+                  h('div', { className: 'pt-2' },
+                    h('label', { htmlFor: 'notes', className: 'text-sm font-medium text-slate-700' }, 'Notas'),
+                    h('div', { className: 'mt-2 inline-flex items-center gap-2' },
+                      h('label', { className: 'inline-flex items-center cursor-pointer' },
+                        h('input', { id: 'notes', type: 'checkbox', className: 'sr-only peer', checked: showNotes, onChange: function(e){ setShowNotes(e.target.checked); } }),
+                        h('div', { className: 'relative w-10 h-6 bg-slate-200 rounded-full peer-checked:bg-slate-900 transition' },
+                          h('span', { className: 'absolute top-0.5 left-0.5 h-5 w-5 bg-white rounded-full transition-transform peer-checked:translate-x-4' })
+                        )
+                      ),
+                      h('span', { className: 'text-sm' }, 'Mostrar notas breves')
+                    )
+                  )
+                )
+              ),
+
+              // Card derecha (gráfico + tabla)
+              h(Card, { className: 'md:col-span-2' },
+                h(CardHeader, null, h(CardTitle, null, 'Comparativa')),
+                h(CardContent, null,
+                  // Gráfico (Recharts o fallback SVG)
+                  h(ChartArea, { data: chartData }),
+
+                  // Tabla
+                  h('div', { className: 'mt-6 overflow-x-auto' },
+                    h('table', { className: 'w-full text-sm' },
+                      h('thead', null,
+                        h('tr', { className: 'text-left text-slate-600' },
+                          h('th', { className: 'py-2 pr-2' }, 'Tecnología'),
+                          h('th', { className: 'py-2 pr-2' }, 'Era'),
+                          h('th', { className: 'py-2 pr-2' }, 'Vel. típica'),
+                          h('th', { className: 'py-2 pr-2' }, 'Tiempo estimado'),
+                          showNotes && h('th', { className: 'py-2 pr-2' }, 'Notas')
+                        )
+                      ),
+                      h('tbody', null,
+                        rows.map(function(r){
+                          return h('tr', { key: r.id, className: 'border-t border-slate-200' },
+                            h('td', { className: 'py-2 pr-2 font-medium' }, r.name),
+                            h('td', { className: 'py-2 pr-2 whitespace-nowrap' }, r.era),
+                            h('td', { className: 'py-2 pr-2' }, r.mbps.toLocaleString() + ' Mbps'),
+                            h('td', { className: 'py-2 pr-2 whitespace-nowrap' }, r.duration),
+                            showNotes && h('td', { className: 'py-2 pr-2 text-slate-600' }, r.notes)
+                          );
+                        })
+                      )
+                    )
+                  ),
+
+                  // Nota
+                  h('div', { className: 'mt-4 flex items-start gap-2 text-slate-600 text-sm' },
+                    // Icono info (SVG inline)
+                    h('svg', { className: 'w-4 h-4 mt-0.5', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' },
+                      h('circle', { cx: 12, cy: 12, r: 10 }),
+                      h('line', { x1: 12, y1: 16, x2: 12, y2: 12 }),
+                      h('line', { x1: 12, y1: 8, x2: 12.01, y2: 8 })
+                    ),
+                    h('p', null, 'Supuestos: unidades decimales (1 GB = 10^9 bytes). La eficiencia reduce la velocidad nominal para contemplar sobrecarga de protocolos, contención de medio compartido y variaciones reales. Los valores de velocidad son típicos observados por usuarios en cada época/tecnología, no máximos de estándar.')
+                  )
+                )
+              )
+            )
+          )
+        );
+      }
+
+      // Montaje + carga de Recharts
+      (function mount(){
+        var container = document.getElementById('root');
+        try {
+          // Arranca la app ya; si Recharts carga después, ChartArea re-renderiza
+          if (ReactDOM && ReactDOM.createRoot) {
+            var root = ReactDOM.createRoot(container);
+            root.render(h(App));
+          } else if (ReactDOM && ReactDOM.render) {
+            ReactDOM.render(h(App), container);
+          } else {
+            throw new Error('ReactDOM no está disponible.');
+          }
+          container.setAttribute('data-ready','true');
+        } catch (e) {
+          throw e; // deja que el banner lo muestre
+        }
+      })();
+
+      // --- Self-tests (unit tests ligeros en runtime; no alteran la UI) ---
+      (function selfTests(){
+        function assertEqual(name, a, b){ return {name:name, pass: a===b, a:a, b:b}; }
+        function approx(name, a, b, tol){ return {name:name, pass: Math.abs(a-b) <= (tol||1e-6), a:a, b:b}; }
+        function show(results){
+          var anyFail = results.some(function(r){ return !r.pass; });
+          var block = document.createElement('details');
+          block.className = 'fixed right-3 bottom-3 max-w-[90vw] bg-white/90 backdrop-blur border border-slate-200 shadow rounded-md p-3 text-xs text-slate-700';
+          var sum = document.createElement('summary');
+          sum.textContent = 'Self-tests: ' + (anyFail ? 'FAIL' : 'OK') + ' ('+results.filter(function(r){return !r.pass;}).length+' fails)';
+          block.appendChild(sum);
+          var pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(results, null, 2);
+          block.appendChild(pre);
+          document.body.appendChild(block);
+        }
+        try{
+          function toBitsLocal(o){ var v=Number(o.value||0); if(o.unit==='MB') return v*1e6*8; if(o.unit==='GB') return v*1e9*8; if(o.unit==='TB') return v*1e12*8; return v*8; }
+          function fmtDur(sec){ if(!isFinite(sec)||sec<=0) return '0 s'; var d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60),s=Math.floor(sec%60); var parts=[]; if(d)parts.push(d+' d'); if(h)parts.push(h+' h'); if(m)parts.push(m+' min'); if(s||parts.length===0)parts.push(s+' s'); return parts.join(' '); }
+
+          var tests = [];
+          // Básicos toBits
+          tests.push(assertEqual('toBits 1 GB', toBitsLocal({value:1,unit:'GB'}), 8e9));
+          tests.push(assertEqual('toBits 2 MB', toBitsLocal({value:2,unit:'MB'}), 16e6));
+          tests.push(assertEqual('toBits 3 TB', toBitsLocal({value:3,unit:'TB'}), 24e12));
+          tests.push(assertEqual('toBits 1024 bytes', toBitsLocal({value:1024,unit:'bytes'}), 8192));
+
+          // Duración
+          tests.push(assertEqual('fmt 90s', fmtDur(90), '1 min 30 s'));
+          tests.push(assertEqual('fmt 3661s', fmtDur(3661), '1 h 1 min 1 s'));
+          tests.push(assertEqual('fmt 86461s', fmtDur(86461), '1 d 1 min 1 s'));
+          tests.push(assertEqual('fmt 0s', fmtDur(0), '0 s'));
+
+          // Cálculo práctico: 1 GB @100 Mbps (100%) => 80s
+          var sec100 = 8e9 / (100e6);
+          tests.push(approx('1GB @100Mbps (100%) seconds', sec100, 80, 1e-9));
+
+          // Cálculo práctico: 1 GB @100 Mbps (85%) => ~94.1176s (1 min 34 s)
+          var sec85 = 8e9 / (100e6*0.85);
+          tests.push(approx('1GB @100Mbps (85%) seconds', sec85, 94.1176470588, 1e-6));
+          tests.push(assertEqual('fmt 1GB@100Mbps@85%', fmtDur(Math.floor(sec85)), '1 min 34 s'));
+
+          show(tests);
+        } catch(e){ console.warn('Self-tests error:', e); }
+      })();
     })();
   </script>
 </body>
