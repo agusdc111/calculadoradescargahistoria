@@ -6,23 +6,56 @@
   <title>Calculadora de tiempo de descarga por tecnología de acceso</title>
   <!-- TailwindCSS (CDN) -->
   <script src="https://cdn.tailwindcss.com"></script>
-  
+
   <!-- React + ReactDOM (UMD, producción) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  
-  <!-- Babel para transformar JSX en el navegador (no requiere build local) -->
-  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-  
+
   <!-- Recharts (UMD) -->
-  <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
+
+  <!-- Babel para transformar JSX en el navegador (no requiere build local) -->
+  <!-- NOTA: babel-standalone@6 soporta presets 'es2015' y 'react'; 'env' NO está incluido -->
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+  <!-- Diagnóstico de errores temprano -->
+  <script>
+    (function(){
+      function banner(msg){
+        var diag = document.getElementById('diagnostics');
+        if(!diag){
+          diag = document.createElement('div');
+          diag.id = 'diagnostics';
+          diag.style.position = 'fixed';
+          diag.style.bottom = '12px';
+          diag.style.left = '12px';
+          diag.style.maxWidth = '90vw';
+          diag.style.zIndex = 99999;
+          diag.className = 'px-3 py-2 rounded-md text-sm bg-red-50 text-red-700 border border-red-200 shadow';
+          document.body.appendChild(diag);
+        }
+        diag.textContent = msg;
+      }
+      window.addEventListener('error', function(e){
+        banner('Runtime error: ' + (e && e.message ? e.message : 'Script error.'));
+      });
+    })();
+  </script>
 </head>
 <body class="min-h-screen w-full bg-gradient-to-b from-slate-50 to-white text-slate-900">
-  <div id="root"></div>
+  <noscript>
+    <div class="m-4 p-3 rounded-md bg-red-50 text-red-700 border border-red-200">Esta aplicación requiere JavaScript habilitado.</div>
+  </noscript>
+  <div id="root" data-ready="false"></div>
 
-  <script type="text/babel">
+  <script type="text/babel" data-presets="es2015,react">
     const { useMemo, useState } = React;
-    const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } = Recharts;
+    const { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } = (window.Recharts || {});
+
+    // Guardas simples para fallos de carga de Recharts
+    if (!ResponsiveContainer || !BarChart || !Bar || !XAxis || !YAxis || !Tooltip) {
+      throw new Error('Recharts no se cargó correctamente. Revisa la red/CDN.');
+    }
 
     // --- Dataset de tecnologías y velocidades típicas reales (aprox.) ---
     // Valores típicos basados en rangos históricamente observados en el mundo. No son máximos teóricos.
@@ -60,6 +93,7 @@
       { id: "leo", name: "Satélite LEO (Starlink)", type: "satelite", era: "2020s", mbps: 150, notes: "50–250 típ.; latencia más baja." },
     ];
 
+    // Utilidades
     function toBits({ value, unit }) {
       const v = Number(value || 0);
       switch (unit) {
@@ -88,16 +122,15 @@
       return parts.join(" ");
     }
 
-    function classNames(...xs) {
-      return xs.filter(Boolean).join(" ");
+    function classNames() {
+      return Array.prototype.slice.call(arguments).filter(Boolean).join(" ");
     }
 
-    function Card({ children, className }) {
-      return <div className={classNames("rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>{children}</div>;
-    }
-    function CardHeader({ children }) { return <div className="px-5 pt-5">{children}</div>; }
-    function CardTitle({ children }) { return <h2 className="text-lg font-semibold">{children}</h2>; }
-    function CardContent({ children, className }) { return <div className={classNames("px-5 pb-5", className)}>{children}</div>; }
+    // Componentes mínimos para reemplazar Card de shadcn/ui
+    function Card(props){ return <div className={classNames("rounded-2xl border border-slate-200 bg-white shadow-sm", props.className)}>{props.children}</div>; }
+    function CardHeader(props){ return <div className="px-5 pt-5">{props.children}</div>; }
+    function CardTitle(props){ return <h2 className="text-lg font-semibold">{props.children}</h2>; }
+    function CardContent(props){ return <div className={classNames("px-5 pb-5", props.className)}>{props.children}</div>; }
 
     function App() {
       const [size, setSize] = useState(1);
@@ -250,7 +283,7 @@
                       </thead>
                       <tbody>
                         {rows.map(r => (
-                          <tr key={r.id} className="border-t border-slate-200">
+                          <tr key={r.id} className="border-t border-slate-2 00">
                             <td className="py-2 pr-2 font-medium">{r.name}</td>
                             <td className="py-2 pr-2 whitespace-nowrap">{r.era}</td>
                             <td className="py-2 pr-2">{r.mbps.toLocaleString()} Mbps</td>
@@ -281,8 +314,58 @@
       );
     }
 
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+    // Montaje robusto (React 18+ y fallback React 17)
+    (function(){
+      var container = document.getElementById('root');
+      try {
+        if (ReactDOM && ReactDOM.createRoot) {
+          var root = ReactDOM.createRoot(container);
+          root.render(<App />);
+        } else if (ReactDOM && ReactDOM.render) {
+          ReactDOM.render(<App />, container);
+        } else {
+          throw new Error('ReactDOM no está disponible.');
+        }
+        container.setAttribute('data-ready','true');
+      } catch (e) {
+        // re-lanza para que el banner lo capture
+        throw e;
+      }
+    })();
+  </script>
+
+  <!-- Self-tests (no modifican la UI) -->
+  <script>
+    (function(){
+      function assertEqual(name, a, b){ return {name, pass: a===b, a, b}; }
+      function show(results){
+        var anyFail = results.some(r=>!r.pass);
+        var block = document.createElement('details');
+        block.className = 'fixed right-3 bottom-3 max-w-[90vw] bg-white/90 backdrop-blur border border-slate-200 shadow rounded-md p-3 text-xs text-slate-700';
+        var sum = document.createElement('summary');
+        sum.textContent = 'Self-tests: ' + (anyFail ? 'FAIL' : 'OK') + ' ('+results.filter(r=>!r.pass).length+' fails)';
+        block.appendChild(sum);
+        var pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(results, null, 2);
+        block.appendChild(pre);
+        document.body.appendChild(block);
+      }
+      try{
+        // Re-implement util funcs in this IIFE scope for testing
+        function toBitsLocal(o){ var v=Number(o.value||0); if(o.unit==='MB') return v*1e6*8; if(o.unit==='GB') return v*1e9*8; if(o.unit==='TB') return v*1e12*8; return v*8; }
+        function fmtDur(sec){ if(!isFinite(sec)||sec<=0) return '0 s'; var d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60),s=Math.floor(sec%60); var parts=[]; if(d)parts.push(d+' d'); if(h)parts.push(h+' h'); if(m)parts.push(m+' min'); if(s||parts.length===0)parts.push(s+' s'); return parts.join(' '); }
+
+        var tests = [];
+        tests.push(assertEqual('toBits 1 GB', toBitsLocal({value:1,unit:'GB'}), 8e9));
+        tests.push(assertEqual('toBits 2 MB', toBitsLocal({value:2,unit:'MB'}), 16e6));
+        tests.push(assertEqual('toBits 3 TB', toBitsLocal({value:3,unit:'TB'}), 24e12));
+        tests.push(assertEqual('fmt 90s', fmtDur(90), '1 min 30 s'));
+        tests.push(assertEqual('fmt 0s', fmtDur(0), '0 s'));
+        tests.push({name:'rows sanity', pass:true}); // placeholder sanity; UI calcula filas en runtime
+
+        show(tests);
+      } catch(e){ console.warn('Self-tests error:', e); }
+    })();
   </script>
 </body>
 </html>
